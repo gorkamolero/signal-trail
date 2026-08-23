@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://signal-trail.hey548648.chatgpt.site"),
   title: "Signal Trail",
   description: "Record real-world mobile connection quality, one reading at a time.",
   manifest: "/manifest.webmanifest",
@@ -13,7 +14,19 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: "/favicon.svg",
-    apple: "/favicon.svg",
+    apple: "/apple-touch-icon.png",
+  },
+  openGraph: {
+    title: "Signal Trail",
+    description: "Measure the connection you actually have.",
+    type: "website",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Signal Trail" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Signal Trail",
+    description: "Measure the connection you actually have.",
+    images: ["/og.png"],
   },
 };
 

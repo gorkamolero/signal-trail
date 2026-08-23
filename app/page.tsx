@@ -99,6 +99,8 @@ export default function Home() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchRef = useRef<number | null>(null);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+  const activeRunRef = useRef(false);
+  const requestRef = useRef<AbortController | null>(null);
   const latestPosition = useRef<{ latitude: number; longitude: number; accuracy: number } | null>(null);
   const currentSamples = useRef<Sample[]>([]);
   const currentStart = useRef<number | null>(null);
@@ -134,7 +136,9 @@ export default function Home() {
   const quality = classify(latest, jitter);
 
   const takeSample = useCallback(async () => {
+    if (!activeRunRef.current) return;
     const controller = new AbortController();
+    requestRef.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 4200);
     const before = performance.now();
     let ok = false;
@@ -151,7 +155,10 @@ export default function Home() {
       ok = false;
     } finally {
       window.clearTimeout(timeout);
+      requestRef.current = null;
     }
+
+    if (!activeRunRef.current) return;
 
     const position = latestPosition.current;
     const sample: Sample = {
@@ -185,6 +192,9 @@ export default function Home() {
   }, [gpsEnabled]);
 
   const stop = useCallback(() => {
+    activeRunRef.current = false;
+    requestRef.current?.abort();
+    requestRef.current = null;
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = null;
     if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
@@ -210,6 +220,7 @@ export default function Home() {
   }, []);
 
   const start = useCallback(async () => {
+    activeRunRef.current = true;
     currentSamples.current = [];
     const now = Date.now();
     currentStart.current = now;
@@ -230,6 +241,8 @@ export default function Home() {
   }, [startGps, takeSample]);
 
   useEffect(() => () => {
+    activeRunRef.current = false;
+    requestRef.current?.abort();
     if (timerRef.current) clearTimeout(timerRef.current);
     if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
   }, []);
