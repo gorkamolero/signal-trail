@@ -1,0 +1,17 @@
+{
+  "name": "Signal Trail",
+  "short_name": "Signal Trail",
+  "description": "Record real-world mobile connection quality.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#10110f",
+  "theme_color": "#10110f",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
