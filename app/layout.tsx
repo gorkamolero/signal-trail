@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL("https://signal-trail.hey548648.chatgpt.site"),
   title: "Signal Trail",
-  description: "Record real-world mobile connection quality, one reading at a time.",
+  description: "Test whether your mobile connection can hold a video call while you move.",
   manifest: "/manifest.webmanifest",
   applicationName: "Signal Trail",
   appleWebApp: {
