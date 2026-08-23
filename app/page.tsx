@@ -34,7 +34,8 @@ type Metrics = {
   up: number | null;
   distance: number;
   drops: number;
-  score: number | null;
+  videoScore: number | null;
+  audioScore: number | null;
 };
 
 const PING_INTERVAL = 5000;
@@ -75,7 +76,7 @@ function haversine(a: Sample, b: Sample) {
   return km < 0.25 ? km : 0;
 }
 
-function callScore(ping: number | null, jitter: number | null, loss: number, down: number | null, up: number | null, drops: number) {
+function videoCallScore(ping: number | null, jitter: number | null, loss: number, down: number | null, up: number | null, drops: number) {
   if (ping === null || jitter === null || down === null || up === null) return null;
   const latencyScore = ping < 100 ? 100 : ping < 150 ? 78 : ping < 250 ? 45 : ping < 400 ? 18 : 0;
   const jitterScore = jitter < 20 ? 100 : jitter < 35 ? 76 : jitter < 60 ? 42 : jitter < 100 ? 15 : 0;
@@ -84,6 +85,16 @@ function callScore(ping: number | null, jitter: number | null, loss: number, dow
   const upScore = up >= 1.5 ? 100 : up >= 1 ? 72 : up >= 0.5 ? 28 : 0;
   const base = latencyScore * .25 + jitterScore * .2 + lossScore * .25 + downScore * .12 + upScore * .18;
   return Math.max(0, Math.round(base - Math.min(35, drops * 9)));
+}
+
+function audioCallScore(ping: number | null, jitter: number | null, loss: number, down: number | null, up: number | null, drops: number) {
+  if (ping === null || jitter === null || down === null || up === null) return null;
+  const latencyScore = ping < 100 ? 100 : ping < 200 ? 82 : ping < 300 ? 62 : ping < 450 ? 25 : 0;
+  const jitterScore = jitter < 20 ? 100 : jitter < 40 ? 82 : jitter < 80 ? 48 : jitter < 120 ? 18 : 0;
+  const lossScore = loss < 1 ? 100 : loss < 3 ? 80 : loss < 6 ? 48 : loss < 10 ? 18 : 0;
+  const bandwidthScore = down >= .1 && up >= .1 ? 100 : down >= .05 && up >= .05 ? 42 : 0;
+  const base = latencyScore * .3 + jitterScore * .25 + lossScore * .25 + bandwidthScore * .2;
+  return Math.max(0, Math.round(base - Math.min(45, drops * 12)));
 }
 
 function getMetrics(samples: Sample[], speeds: SpeedReading[]): Metrics {
@@ -97,16 +108,29 @@ function getMetrics(samples: Sample[], speeds: SpeedReading[]): Metrics {
   const up = median(speeds.flatMap((speed) => speed.up === null ? [] : [speed.up]));
   const distance = samples.slice(1).reduce((sum, sample, index) => sum + haversine(samples[index], sample), 0);
   const drops = samples.reduce((count, sample, index) => count + (!sample.ok && (index === 0 || samples[index - 1].ok) ? 1 : 0), 0);
-  return { ping, jitter, loss, down, up, distance, drops, score: callScore(ping, jitter, loss, down, up, drops) };
+  return {
+    ping, jitter, loss, down, up, distance, drops,
+    videoScore: videoCallScore(ping, jitter, loss, down, up, drops),
+    audioScore: audioCallScore(ping, jitter, loss, down, up, drops),
+  };
 }
 
-function statusFor(running: boolean, samples: Sample[], metrics: Metrics) {
-  if (!samples.length) return { label: running ? "SCANNING" : "READY", tone: "idle", detail: running ? "Finding the signal" : "Start a trail" };
-  if (!samples.at(-1)?.ok) return { label: "SIGNAL LOST", tone: "lost", detail: "Trying to reconnect" };
-  if (metrics.score === null) return { label: "CHECKING", tone: "idle", detail: "Measuring call speed" };
-  if (metrics.score >= 80) return { label: "CALL READY", tone: "great", detail: "Video should hold" };
-  if (metrics.score >= 60) return { label: "CAUTION", tone: "weak", detail: "Call may break up" };
-  return { label: "NOT READY", tone: "lost", detail: "Call quality is at risk" };
+function videoStatusFor(running: boolean, samples: Sample[], metrics: Metrics) {
+  if (!samples.length) return { label: running ? "SCANNING" : "READY", tone: "idle" };
+  if (!samples.at(-1)?.ok) return { label: "LOST", tone: "lost" };
+  if (metrics.videoScore === null) return { label: "CHECKING", tone: "idle" };
+  if (metrics.videoScore >= 80) return { label: "READY", tone: "great" };
+  if (metrics.videoScore >= 60) return { label: "RISK", tone: "weak" };
+  return { label: "NO VIDEO", tone: "lost" };
+}
+
+function audioStatusFor(running: boolean, samples: Sample[], metrics: Metrics) {
+  if (!samples.length) return { label: running ? "SCANNING" : "READY", tone: "idle" };
+  if (!samples.at(-1)?.ok) return { label: "LOST", tone: "lost" };
+  if (metrics.audioScore === null) return { label: "CHECKING", tone: "idle" };
+  if (metrics.audioScore >= 75) return { label: "READY", tone: "great" };
+  if (metrics.audioScore >= 50) return { label: "RISK", tone: "weak" };
+  return { label: "NO AUDIO", tone: "lost" };
 }
 
 function SignalTrace({ samples, compact = false }: { samples: Sample[]; compact?: boolean }) {
@@ -203,7 +227,9 @@ export default function Home() {
   }, [running, startedAt]);
 
   const metrics = useMemo(() => getMetrics(samples, speeds), [samples, speeds]);
-  const status = statusFor(running, samples, metrics);
+  const videoStatus = videoStatusFor(running, samples, metrics);
+  const audioStatus = audioStatusFor(running, samples, metrics);
+  const overallTone = videoStatus.tone === "great" ? "great" : audioStatus.tone === "great" ? "weak" : audioStatus.tone;
   const latestSpeed = speeds.at(-1);
 
   const takeSample = useCallback(async () => {
@@ -371,12 +397,14 @@ export default function Home() {
   }
 
   function exportTrail(trail: Trail) {
-    const rows = ["timestamp,success,rtt_ms,download_mbps,upload_mbps,latitude,longitude,accuracy_m"];
+    const exportMetrics = getMetrics(trail.samples, trail.speeds);
+    const rows = ["timestamp,success,rtt_ms,download_mbps,upload_mbps,video_score,audio_score,latitude,longitude,accuracy_m"];
     let currentSpeed: SpeedReading | undefined;
     for (const sample of trail.samples) {
       currentSpeed = trail.speeds.filter((speed) => speed.at <= sample.at).at(-1) ?? currentSpeed ?? trail.speeds[0];
       rows.push([
         new Date(sample.at).toISOString(), sample.ok, sample.rtt ?? "", currentSpeed?.down ?? "", currentSpeed?.up ?? "",
+        exportMetrics.videoScore ?? "", exportMetrics.audioScore ?? "",
         sample.latitude ?? "", sample.longitude ?? "", sample.accuracy ?? "",
       ].join(","));
     }
@@ -390,7 +418,7 @@ export default function Home() {
   }
 
   return (
-    <main className={`app-shell tone-${status.tone}`}>
+    <main className={`app-shell tone-${overallTone}`}>
       <header className="topbar">
         <button className="brand" onClick={() => setView("test")} aria-label="Open test">
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span>
@@ -405,17 +433,25 @@ export default function Home() {
       {view === "test" ? (
         <>
           <section className="instrument" aria-live="polite">
-            <SignalGlyph score={metrics.score} running={running} />
-            <div className="status-line">
-              <h1>{status.label}</h1>
-              {metrics.score !== null && <strong>{metrics.score}<small>%</small></strong>}
+            <SignalGlyph score={Math.max(metrics.videoScore ?? 0, metrics.audioScore ?? 0) || null} running={running} />
+            <div className="call-modes">
+              <div className={`call-mode tone-${videoStatus.tone}`}>
+                <span>VIDEO</span>
+                <strong>{videoStatus.label}</strong>
+                <b>{metrics.videoScore ?? "—"}<small>%</small></b>
+              </div>
+              <div className={`call-mode tone-${audioStatus.tone}`}>
+                <span>AUDIO</span>
+                <strong>{audioStatus.label}</strong>
+                <b>{metrics.audioScore ?? "—"}<small>%</small></b>
+              </div>
             </div>
-            <p>{status.detail}{running ? ` · ${formatDuration(elapsed)}` : ""}</p>
+            <p>{running ? formatDuration(elapsed) : "ONE TRAIL · BOTH MODES"}</p>
           </section>
 
           <SignalTrace samples={samples} />
 
-          <section className="metric-grid" aria-label="Video call measurements">
+          <section className="metric-grid" aria-label="Call measurements">
             <Metric label="PING" value={metrics.ping ?? "—"} unit="ms" />
             <Metric label="JITTER" value={metrics.jitter ?? "—"} unit="ms" />
             <Metric label="LOSS" value={metrics.loss} unit="%" />
@@ -427,7 +463,7 @@ export default function Home() {
             <button className={`main-control ${running ? "stop" : "start"}`} onClick={running ? stop : start}>
               <span className="control-icon" aria-hidden="true" />
               <strong>{running ? "STOP & SAVE" : "START TRAIL"}</strong>
-              <small>{running ? `${samples.length} PINGS` : "VIDEO CALL TEST"}</small>
+              <small>{running ? `${samples.length} PINGS` : "VIDEO + AUDIO"}</small>
             </button>
             <div className="utility-row">
               <button
@@ -460,19 +496,27 @@ export default function Home() {
             <div className="trail-list">
               {history.map((trail) => {
                 const trailMetrics = getMetrics(trail.samples, trail.speeds);
-                const trailStatus = statusFor(false, trail.samples, trailMetrics);
+                const trailVideo = videoStatusFor(false, trail.samples, trailMetrics);
+                const trailAudio = audioStatusFor(false, trail.samples, trailMetrics);
+                const trailTone = trailVideo.tone === "great" ? "great" : trailAudio.tone === "great" ? "weak" : trailAudio.tone;
                 return (
-                  <article className={`trail-card tone-${trailStatus.tone}`} key={trail.id}>
+                  <article className={`trail-card tone-${trailTone}`} key={trail.id}>
                     <div className="trail-title">
                       <button onClick={() => renameTrail(trail)}><strong>{trail.name}</strong><span>✎</span></button>
-                      <div className="trail-score">{trailMetrics.score ?? "—"}<small>%</small></div>
+                      <div className="trail-scores">
+                        <span>V <strong>{trailMetrics.videoScore ?? "—"}</strong></span>
+                        <span>A <strong>{trailMetrics.audioScore ?? "—"}</strong></span>
+                      </div>
                     </div>
                     <div className="trail-meta">
                       <span>{new Date(trail.startedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
                       <span>{formatDuration(trail.endedAt - trail.startedAt)}</span>
                       {trailMetrics.distance > .01 && <span>{trailMetrics.distance.toFixed(2)} km</span>}
                       {trailMetrics.drops > 0 && <span>{trailMetrics.drops} {trailMetrics.drops === 1 ? "drop" : "drops"}</span>}
-                      <b>{trailStatus.label}</b>
+                    </div>
+                    <div className="trail-readiness">
+                      <span className={`tone-${trailVideo.tone}`}>VIDEO {trailVideo.label}</span>
+                      <span className={`tone-${trailAudio.tone}`}>AUDIO {trailAudio.label}</span>
                     </div>
                     <SignalTrace samples={trail.samples} compact />
                     <div className="trail-metrics">
