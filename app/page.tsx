@@ -33,6 +33,7 @@ type Metrics = {
   down: number | null;
   up: number | null;
   distance: number;
+  drops: number;
   score: number | null;
 };
 
@@ -74,14 +75,15 @@ function haversine(a: Sample, b: Sample) {
   return km < 0.25 ? km : 0;
 }
 
-function callScore(ping: number | null, jitter: number | null, loss: number, down: number | null, up: number | null) {
+function callScore(ping: number | null, jitter: number | null, loss: number, down: number | null, up: number | null, drops: number) {
   if (ping === null || jitter === null || down === null || up === null) return null;
   const latencyScore = ping < 100 ? 100 : ping < 150 ? 78 : ping < 250 ? 45 : ping < 400 ? 18 : 0;
   const jitterScore = jitter < 20 ? 100 : jitter < 35 ? 76 : jitter < 60 ? 42 : jitter < 100 ? 15 : 0;
   const lossScore = loss < 1 ? 100 : loss < 2.5 ? 72 : loss < 5 ? 35 : loss < 10 ? 10 : 0;
   const downScore = down >= 2 ? 100 : down >= 1.2 ? 72 : down >= 0.6 ? 28 : 0;
   const upScore = up >= 1.5 ? 100 : up >= 1 ? 72 : up >= 0.5 ? 28 : 0;
-  return Math.round(latencyScore * .25 + jitterScore * .2 + lossScore * .25 + downScore * .12 + upScore * .18);
+  const base = latencyScore * .25 + jitterScore * .2 + lossScore * .25 + downScore * .12 + upScore * .18;
+  return Math.max(0, Math.round(base - Math.min(35, drops * 9)));
 }
 
 function getMetrics(samples: Sample[], speeds: SpeedReading[]): Metrics {
@@ -94,7 +96,8 @@ function getMetrics(samples: Sample[], speeds: SpeedReading[]): Metrics {
   const down = median(speeds.flatMap((speed) => speed.down === null ? [] : [speed.down]));
   const up = median(speeds.flatMap((speed) => speed.up === null ? [] : [speed.up]));
   const distance = samples.slice(1).reduce((sum, sample, index) => sum + haversine(samples[index], sample), 0);
-  return { ping, jitter, loss, down, up, distance, score: callScore(ping, jitter, loss, down, up) };
+  const drops = samples.reduce((count, sample, index) => count + (!sample.ok && (index === 0 || samples[index - 1].ok) ? 1 : 0), 0);
+  return { ping, jitter, loss, down, up, distance, drops, score: callScore(ping, jitter, loss, down, up, drops) };
 }
 
 function statusFor(running: boolean, samples: Sample[], metrics: Metrics) {
@@ -468,6 +471,7 @@ export default function Home() {
                       <span>{new Date(trail.startedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
                       <span>{formatDuration(trail.endedAt - trail.startedAt)}</span>
                       {trailMetrics.distance > .01 && <span>{trailMetrics.distance.toFixed(2)} km</span>}
+                      {trailMetrics.drops > 0 && <span>{trailMetrics.drops} {trailMetrics.drops === 1 ? "drop" : "drops"}</span>}
                       <b>{trailStatus.label}</b>
                     </div>
                     <SignalTrace samples={trail.samples} compact />
