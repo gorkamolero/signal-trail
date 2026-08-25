@@ -20,6 +20,9 @@ type SpeedReading = {
 type Trail = {
   id: string;
   name: string;
+  startPlace: string | null;
+  endPlace: string | null;
+  autoNamed: boolean;
   startedAt: number;
   endedAt: number;
   samples: Sample[];
@@ -42,6 +45,19 @@ const PING_INTERVAL = 5000;
 const SPEED_INTERVAL = 30000;
 const HISTORY_KEY = "signal-trail-sessions-v1";
 const HISTORY_LIMIT = 24;
+
+function shortId(id: string) {
+  const numeric = Number(id);
+  return (Number.isFinite(numeric) ? numeric.toString(36) : id).slice(-3).toUpperCase();
+}
+
+function automaticTrailName(trail: Pick<Trail, "id" | "startPlace" | "endPlace">) {
+  const suffix = shortId(trail.id);
+  if (trail.startPlace && trail.endPlace && trail.startPlace !== trail.endPlace) {
+    return `${trail.startPlace} → ${trail.endPlace} · ${suffix}`;
+  }
+  return `${trail.endPlace ?? trail.startPlace ?? "Trail"} · ${suffix}`;
+}
 
 function median(values: number[]) {
   if (!values.length) return null;
@@ -198,6 +214,46 @@ export default function Home() {
   const currentSamples = useRef<Sample[]>([]);
   const currentSpeeds = useRef<SpeedReading[]>([]);
   const currentStart = useRef<number | null>(null);
+  const currentTrailId = useRef<string | null>(null);
+  const startPlaceRef = useRef<string | null>(null);
+  const endPlaceRef = useRef<string | null>(null);
+  const startLookupQueued = useRef(false);
+  const placeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const lastPlaceLookupAt = useRef(0);
+
+  const persistHistory = useCallback((next: Trail[]) => {
+    const limited = next.slice(0, HISTORY_LIMIT);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(limited));
+    return limited;
+  }, []);
+
+  const applyPlace = useCallback((id: string, field: "startPlace" | "endPlace", place: string) => {
+    if (currentTrailId.current === id) {
+      if (field === "startPlace") startPlaceRef.current = place;
+      else endPlaceRef.current = place;
+    }
+    setHistory((previous) => persistHistory(previous.map((trail) => {
+      if (trail.id !== id) return trail;
+      const updated = { ...trail, [field]: place };
+      return { ...updated, name: trail.autoNamed ? automaticTrailName(updated) : trail.name };
+    })));
+  }, [persistHistory]);
+
+  const queuePlaceLookup = useCallback((id: string, field: "startPlace" | "endPlace", position: { latitude: number; longitude: number }) => {
+    placeQueueRef.current = placeQueueRef.current.then(async () => {
+      const wait = Math.max(0, 1100 - (Date.now() - lastPlaceLookupAt.current));
+      if (wait) await new Promise((resolve) => window.setTimeout(resolve, wait));
+      lastPlaceLookupAt.current = Date.now();
+      try {
+        const response = await fetch(`/api/place?lat=${position.latitude.toFixed(5)}&lon=${position.longitude.toFixed(5)}`, { cache: "force-cache" });
+        if (!response.ok) return;
+        const data = await response.json() as { name?: string };
+        if (data.name) applyPlace(id, field, data.name);
+      } catch {
+        // Naming is optional and never interrupts the measurement loops.
+      }
+    }).catch(() => undefined);
+  }, [applyPlace]);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
@@ -207,6 +263,9 @@ export default function Home() {
         setHistory(stored.slice(0, HISTORY_LIMIT).map((trail, index) => ({
           id: trail.id ?? String(trail.startedAt ?? Date.now() + index),
           name: trail.name ?? `Trail ${stored.length - index}`,
+          startPlace: trail.startPlace ?? null,
+          endPlace: trail.endPlace ?? null,
+          autoNamed: trail.autoNamed ?? false,
           startedAt: trail.startedAt ?? Date.now(),
           endedAt: trail.endedAt ?? trail.startedAt ?? Date.now(),
           samples: trail.samples ?? [],
@@ -305,19 +364,18 @@ export default function Home() {
     setGpsState("searching");
     watchRef.current = navigator.geolocation.watchPosition(
       ({ coords }) => {
-        latestPosition.current = { latitude: coords.latitude, longitude: coords.longitude, accuracy: Math.round(coords.accuracy) };
+        const position = { latitude: coords.latitude, longitude: coords.longitude, accuracy: Math.round(coords.accuracy) };
+        latestPosition.current = position;
         setGpsState("locked");
+        if (!startLookupQueued.current && currentTrailId.current) {
+          startLookupQueued.current = true;
+          queuePlaceLookup(currentTrailId.current, "startPlace", position);
+        }
       },
       () => setGpsState("denied"),
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 },
     );
-  }, [gpsEnabled]);
-
-  const persistHistory = useCallback((next: Trail[]) => {
-    const limited = next.slice(0, HISTORY_LIMIT);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(limited));
-    return limited;
-  }, []);
+  }, [gpsEnabled, queuePlaceLookup]);
 
   const stop = useCallback(() => {
     activeRunRef.current = false;
@@ -337,27 +395,37 @@ export default function Home() {
     setRunning(false);
     setGpsState("idle");
 
-    if (currentStart.current && currentSamples.current.length) {
+    if (currentStart.current && currentTrailId.current && currentSamples.current.length) {
       const trail: Trail = {
-        id: String(currentStart.current),
-        name: `Trail ${history.length + 1}`,
+        id: currentTrailId.current,
+        name: "",
+        startPlace: startPlaceRef.current,
+        endPlace: endPlaceRef.current,
+        autoNamed: true,
         startedAt: currentStart.current,
         endedAt: Date.now(),
         samples: currentSamples.current,
         speeds: currentSpeeds.current,
       };
+      trail.name = automaticTrailName(trail);
       setHistory((previous) => persistHistory([trail, ...previous]));
+      const endPosition = latestPosition.current;
+      if (endPosition) queuePlaceLookup(trail.id, "endPlace", endPosition);
       setView("history");
     }
-  }, [history.length, persistHistory]);
+  }, [persistHistory, queuePlaceLookup]);
 
   const start = useCallback(async () => {
     activeRunRef.current = true;
     currentSamples.current = [];
     currentSpeeds.current = [];
     latestPosition.current = null;
+    startPlaceRef.current = null;
+    endPlaceRef.current = null;
+    startLookupQueued.current = false;
     const now = Date.now();
     currentStart.current = now;
+    currentTrailId.current = String(now);
     setSamples([]);
     setSpeeds([]);
     setStartedAt(now);
@@ -388,7 +456,7 @@ export default function Home() {
   function renameTrail(trail: Trail) {
     const name = window.prompt("Name this trail", trail.name)?.trim();
     if (!name) return;
-    setHistory((previous) => persistHistory(previous.map((item) => item.id === trail.id ? { ...item, name } : item)));
+    setHistory((previous) => persistHistory(previous.map((item) => item.id === trail.id ? { ...item, name, autoNamed: false } : item)));
   }
 
   function deleteTrail(trail: Trail) {
@@ -534,6 +602,9 @@ export default function Home() {
               })}
             </div>
           )}
+          <a className="map-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+            Place names © OpenStreetMap contributors
+          </a>
         </section>
       )}
     </main>

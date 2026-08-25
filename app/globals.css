@@ -132,10 +132,10 @@ button { font: inherit; }
 .trail-list { display: grid; gap: 11px; padding-bottom: 15px; }
 .trail-card { padding: 15px; border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: 3px; background: rgba(21, 23, 20, .94); }
 .trail-title { display: flex; justify-content: space-between; align-items: flex-start; }
-.trail-title > button { border: 0; background: transparent; color: var(--ink); padding: 0; text-align: left; cursor: pointer; }
-.trail-title strong { font-family: Arial, Helvetica, sans-serif; font-size: 18px; }
+.trail-title > button { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); padding: 0 10px 0 0; text-align: left; cursor: pointer; }
+.trail-title strong { display: block; overflow-wrap: anywhere; font-family: Arial, Helvetica, sans-serif; font-size: 18px; }
 .trail-title button span { margin-left: 7px; color: #5f635a; font-size: 10px; }
-.trail-scores { display: flex; gap: 7px; color: #73776d; font-size: 8px; }
+.trail-scores { flex: none; display: flex; gap: 7px; color: #73776d; font-size: 8px; }
 .trail-scores span { padding: 5px 6px; border: 1px solid var(--line); border-radius: 2px; }
 .trail-scores strong { margin-left: 2px; color: var(--accent); font-family: Arial, Helvetica, sans-serif; font-size: 15px; }
 .trail-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 5px; color: #6f7369; font-size: 8px; text-transform: uppercase; }
@@ -148,6 +148,8 @@ button { font: inherit; }
 .trail-actions { display: flex; justify-content: flex-end; gap: 15px; padding-top: 11px; }
 .trail-actions button { border: 0; background: transparent; color: #8b8f84; padding: 2px; font-size: 8px; letter-spacing: .1em; cursor: pointer; }
 .trail-actions button.delete { color: #754943; }
+.map-credit { display: block; padding: 8px 0 2px; color: #4f534b; font-size: 7px; text-align: center; text-decoration: none; }
+.map-credit:hover { color: #777b70; }
 
 @keyframes pulse { to { opacity: .35; } }
 @keyframes scan { to { opacity: .25; transform: scaleY(.82); transform-origin: bottom; } }
