@@ -2,6 +2,8 @@
 
 Test whether your mobile connection can hold a video call while you move. Start a trail, keep the app open and walk, ride or drive. Signal Trail measures the connection you actually have along the way and scores how well it would hold a video call and an audio call.
 
+Try it on your phone at [signal-trail.hey548648.chatgpt.site](https://signal-trail.hey548648.chatgpt.site).
+
 ## How it works
 
 - Every five seconds it pings the server for latency, jitter and packet loss, and every 30 seconds it runs a small download and upload test.
